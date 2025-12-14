@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<title>ロボカップ簡易シミュレーション</title>
+<style>
+  body { font-family: sans-serif; }
+  canvas { border: 1px solid #333; background: #0a7f2e; }
+  .ui { margin-top: 8px; }
+</style>
+</head>
+<body>
+<h2>サッカー風シミュレーション</h2>
+
+<canvas id="field"></canvas>
+
+<div class="ui">
+  <button onclick="resetSim()">リセット</button>
+  <button onclick="startSim()">スタート</button>
+  <p>
+    左クリック：ロボット配置<br>
+    右クリック：ボール配置
+  </p>
+</div>
+
+<script>
+// ===== 定数 =====
+const FIELD_W = 122;
+const FIELD_H = 183;
+const BALL_R = 2.5;
+const ROBOT_R = 11;
+const LINE_MARGIN = 5;
+
+const GOAL_W = 30;
+const GOAL_D = 5;
+
+const ENEMY_GOAL = { x: FIELD_W/2, y: 0 };
+const HOME_GOAL  = { x: FIELD_W/2, y: FIELD_H };
+
+const SCALE = 4;
+
+// ===== canvas =====
+const canvas = document.getElementById("field");
+canvas.width  = FIELD_W * SCALE;
+canvas.height = FIELD_H * SCALE;
+const ctx = canvas.getContext("2d");
+
+// ===== 状態 =====
+let ball, robot;
+let running = false;
+let goalCooldown = 0;
+
+// ===== 初期化 =====
+function resetSim(){
+  robot = {
+    x: FIELD_W/2,
+    y: FIELD_H - 20,
+    speed: 0.6
+  };
+
+  ball = {
+    x: FIELD_W/2,
+    y: FIELD_H/2,
+    vx: 0,
+    vy: 0
+  };
+
+  running = false;
+  goalCooldown = 0;
+}
+
+resetSim();
+
+// ===== 角度系 =====
+function angleTo(ax, ay, bx, by){
+  return Math.atan2(by - ay, bx - ax) * 180 / Math.PI;
+}
+
+function normalizeAngle(a){
+  while(a > 180) a -= 360;
+  while(a < -180) a += 360;
+  return a;
+}
+
+// ===== ライン =====
+function getLineEscapeAngle(x, y){
+  if(x <= ROBOT_R + LINE_MARGIN) return 0;
+  if(x >= FIELD_W - ROBOT_R - LINE_MARGIN) return 180;
+  if(y <= ROBOT_R + LINE_MARGIN) return 90;
+  if(y >= FIELD_H - ROBOT_R - LINE_MARGIN) return -90;
+  return null;
+}
+
+// ===== ロボット更新 =====
+function updateRobot(){
+  const robotToBall = angleTo(robot.x, robot.y, ball.x, ball.y);
+  const robotToGoal = angleTo(robot.x, robot.y, ENEMY_GOAL.x, ENEMY_GOAL.y);
+  const diffBG = normalizeAngle(robotToGoal - robotToBall);
+
+  let moveAngle;
+
+  const escape = getLineEscapeAngle(robot.x, robot.y);
+  const ballBehind = Math.abs(diffBG) > 90;
+
+  // ===== 行動決定 =====
+  if(ballBehind){
+    if(escape !== null){
+      // ★ ライン踏んだらボール直進
+      moveAngle = robotToBall;
+    } else {
+      moveAngle = robotToBall + 180 + Math.sign(diffBG) * 30;
+    }
+
+  } else if(escape !== null){
+    // ★ 通常時もライン踏んだらボール直進
+    moveAngle = robotToBall;
+
+  } else if(Math.abs(diffBG) <= 10){
+    moveAngle = robotToBall;
+
+  } else if(diffBG > 10){
+    moveAngle = robotToBall - 90;
+
+  } else {
+    moveAngle = robotToBall + 90;
+  }
+
+  const nx = robot.x + Math.cos(moveAngle * Math.PI/180) * robot.speed;
+  const ny = robot.y + Math.sin(moveAngle * Math.PI/180) * robot.speed;
+
+  robot.x = Math.min(Math.max(nx, ROBOT_R), FIELD_W - ROBOT_R);
+  robot.y = Math.min(Math.max(ny, ROBOT_R), FIELD_H - ROBOT_R);
+}
+
+// ===== ボール更新 =====
+function updateBall(){
+  const dx = ball.x - robot.x;
+  const dy = ball.y - robot.y;
+  const d  = Math.hypot(dx, dy);
+
+  if(d < BALL_R + ROBOT_R){
+    const a = Math.atan2(dy, dx);
+    ball.vx = Math.cos(a) * 1.5;
+    ball.vy = Math.sin(a) * 1.5;
+  }
+
+  ball.x += ball.vx;
+  ball.y += ball.vy;
+
+  if(ball.x < BALL_R || ball.x > FIELD_W - BALL_R) ball.vx *= -1;
+  if(ball.y < BALL_R || ball.y > FIELD_H - BALL_R) ball.vy *= -1;
+
+  ball.vx *= 0.98;
+  ball.vy *= 0.98;
+}
+
+// ===== ゴール判定 =====
+function checkGoal(){
+  if(ball.y <= GOAL_D){
+    resetSim();
+  }
+}
+
+// ===== 描画 =====
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  ctx.strokeStyle="#fff";
+  ctx.strokeRect(0,0,canvas.width,canvas.height);
+
+  // ライン
+  ctx.strokeStyle="red";
+  ctx.strokeRect(
+    LINE_MARGIN*SCALE,
+    LINE_MARGIN*SCALE,
+    (FIELD_W-2*LINE_MARGIN)*SCALE,
+    (FIELD_H-2*LINE_MARGIN)*SCALE
+  );
+
+  // ゴール
+  ctx.fillStyle="#fff";
+  ctx.fillRect((ENEMY_GOAL.x-GOAL_W/2)*SCALE,0,GOAL_W*SCALE,GOAL_D*SCALE);
+  ctx.fillRect((HOME_GOAL.x-GOAL_W/2)*SCALE,(FIELD_H-GOAL_D)*SCALE,GOAL_W*SCALE,GOAL_D*SCALE);
+
+  // ボール
+  ctx.fillStyle="orange";
+  ctx.beginPath();
+  ctx.arc(ball.x*SCALE, ball.y*SCALE, BALL_R*SCALE, 0, Math.PI*2);
+  ctx.fill();
+
+  // ロボット
+  ctx.fillStyle="blue";
+  ctx.beginPath();
+  ctx.arc(robot.x*SCALE, robot.y*SCALE, ROBOT_R*SCALE, 0, Math.PI*2);
+  ctx.fill();
+}
+
+// ===== ループ =====
+function loop(){
+  if(running){
+    updateRobot();
+    updateBall();
+    checkGoal();
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+
+// ===== 操作 =====
+function startSim(){ running = true; }
+
+// クリック配置
+canvas.addEventListener("mousedown", e=>{
+  if(running) return;
+  const rect = canvas.getBoundingClientRect();
+  robot.x = (e.clientX - rect.left) / SCALE;
+  robot.y = (e.clientY - rect.top) / SCALE;
+});
+
+canvas.addEventListener("contextmenu", e=>{
+  e.preventDefault();
+  if(running) return;
+  const rect = canvas.getBoundingClientRect();
+  ball.x = (e.clientX - rect.left) / SCALE;
+  ball.y = (e.clientY - rect.top) / SCALE;
+});
+</script>
+</body>
+</html>
